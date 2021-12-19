@@ -14,7 +14,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.X509 (CertificateChain)
 import Foreign.Ptr
-import Network.Socket (Socket, SockAddr)
+import Network.Socket (Socket, SockAddr, withSocketsDo)
 import Network.TLS.QUIC
 
 import Network.QUIC.Config
@@ -254,7 +254,7 @@ newConnection :: Role
               -> IORef [Socket]
               -> RecvQ
               -> IO Connection
-newConnection rl myparams verInfo myAuthCIDs peerAuthCIDs debugLog qLog hooks sref recvQ = do
+newConnection rl myparams verInfo myAuthCIDs peerAuthCIDs debugLog qLog hooks sref recvQ = withSocketsDo $ do
     outQ <- newTQueueIO
     let put x = atomically $ writeTQueue outQ $ OutRetrans x
     connstate <- newConnState rl
