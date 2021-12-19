@@ -26,8 +26,6 @@
 #include <string.h>
 #ifdef _WINDOWS
 #include <ws2tcpip.h>
-#include <winsock.h>
-#include <winsock2.h>
 #else
 #include <arpa/inet.h>
 #include <sys/time.h>

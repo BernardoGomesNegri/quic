@@ -26,10 +26,6 @@
 extern "C" {
 #endif
 
-#ifdef _WINDOWS
-#include "winsock.h"
-#endif
-
 #include <assert.h>
 #include <inttypes.h>
 #include <string.h>
