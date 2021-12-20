@@ -80,7 +80,7 @@ runClient conf client0 isICVN verInfo = do
                   Right r -> return r
         E.trySyncOrAsync runThreads >>= closure conn ldcc
   where
-    open = createClientConnection conf verInfo
+    open = NS.withSocketsDo $ createClientConnection conf verInfo
     clse connRes = do
         let conn = connResConnection connRes
         setDead conn
