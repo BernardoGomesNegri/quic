@@ -270,11 +270,7 @@ newConnection :: Role
               -> Send
               -> Recv
               -> IO Connection
-<<<<<<< HEAD
-newConnection rl myparams verInfo myAuthCIDs peerAuthCIDs debugLog qLog hooks sref recvQ = withSocketsDo $ do
-=======
-newConnection rl myparams verInfo myAuthCIDs peerAuthCIDs debugLog qLog hooks sref recvQ ~send ~recv = do
->>>>>>> upstream/BernardoGomesNegri-master
+newConnection rl myparams verInfo myAuthCIDs peerAuthCIDs debugLog qLog hooks sref recvQ ~send ~recv = withSocketsDo $ do
     outQ <- newTQueueIO
     let put x = atomically $ writeTQueue outQ $ OutRetrans x
     connstate <- newConnState rl

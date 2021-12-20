@@ -5335,14 +5335,13 @@ int (*volatile ptls_mem_equal)(const void *x, const void *y, size_t len) = mem_e
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
-<<<<<<< HEAD
-}*/
+
+}
 =======
 #else
     return 0;
 #endif
-}
->>>>>>> upstream/BernardoGomesNegri-master
+}*/
 
 //ptls_get_time_t ptls_get_time = {get_time};
 #if PICOTLS_USE_DTRACE
