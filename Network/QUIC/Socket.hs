@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module Network.QUIC.Socket where
 
 import Control.Concurrent
@@ -47,6 +48,9 @@ udpServerConnectedSocket mysa peersa = E.bracketOnError open close $ \s -> do
     family = sockAddrFamily mysa
     open   = socket family Datagram defaultProtocol
 
+#ifdef mingw32_HOST_OS
+udpClientSocket = udpClientConnectedSocket
+#else
 udpClientSocket :: HostName -> ServiceName -> IO (Socket,SockAddr)
 udpClientSocket host port = do
     addr <- head <$> getAddrInfo (Just hints) (Just host) (Just port)
@@ -56,6 +60,7 @@ udpClientSocket host port = do
         return (s,sa)
  where
     hints = defaultHints { addrSocketType = Datagram }
+#endif
 
 udpClientConnectedSocket :: HostName -> ServiceName -> IO (Socket,SockAddr)
 udpClientConnectedSocket host port = do
