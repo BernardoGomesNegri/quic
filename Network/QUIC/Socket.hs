@@ -51,7 +51,7 @@ udpClientSocket :: HostName -> ServiceName -> IO (Socket,SockAddr)
 udpClientSocket host port = do
     addr <- head <$> getAddrInfo (Just hints) (Just host) (Just port)
     E.bracketOnError (openSocket addr) close $ \s -> do
-        -- print "bound socket on client"
+        --print "bound socket on client"
         let sa = addrAddress addr
         return (s,sa)
  where
@@ -63,6 +63,7 @@ udpClientConnectedSocket host port = do
     E.bracketOnError (openSocket addr) close $ \s -> do
         let sa = addrAddress addr
         connect s sa
+        --print "connected socket"
         return (s,sa)
  where
     hints = defaultHints { addrSocketType = Datagram }

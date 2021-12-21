@@ -56,6 +56,7 @@ sendPacket conn spkts0 = getMaxPacketSize conn >>= go
             when (isServer conn) $ waitAntiAmplificationFree conn bytes
             now <- getTimeMicrosecond
             connSend conn buf0 bytes
+            --print "sent data"
             addTxBytes conn bytes
             forM_ sentPackets $ \sentPacket0 -> do
                 let sentPacket = sentPacket0 { spTimeSent = now }

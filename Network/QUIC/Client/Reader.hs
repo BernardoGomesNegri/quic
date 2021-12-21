@@ -36,11 +36,15 @@ readerClient s0 conn = handleLogUnit logAction $ do
         ito <- readMinIdleTimeout conn
         mbs <- timeout ito $ do
             case msa0 of
-              Nothing  ->     NSB.recv     s0 maximumUdpPayloadSize
+              Nothing  -> do
+                --print "about to recv"
+                x <- NSB.recv     s0 maximumUdpPayloadSize
+                --print "got something"
+                return x
               Just sa0 -> do
-                  -- print "about to recv"
+                  --print "about to recv"
                   (bs, sa) <- NSB.recvFrom s0 maximumUdpPayloadSize
-                  -- print ("received something" :: String)
+                  --print ("received something" :: String)
                   return $ if sa == sa0 then bs else ""
         case mbs of
           Nothing -> close s0

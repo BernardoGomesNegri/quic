@@ -96,6 +96,7 @@ createClientConnection conf@ClientConfig{..} verInfo = do
                   udpClientSocket ccServerName ccPortName
                 else
                   udpClientConnectedSocket ccServerName ccPortName
+    --print "connected socket"
     q <- newRecvQ
     sref <- newIORef [s0]
     let send buf siz = do
@@ -125,6 +126,7 @@ createClientConnection conf@ClientConfig{..} verInfo = do
     setInitialCongestionWindow (connLDCC conn) pktSiz
     setAddressValidated conn
     when ccAutoMigration $ setServerAddr conn sa0
+    --print "about to run readerClient"
     let reader = readerClient s0 conn -- dies when s0 is closed.
     return $ ConnRes conn myAuthCIDs reader
 
