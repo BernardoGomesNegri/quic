@@ -50,7 +50,7 @@ makeTestServerConfigR = do
 
 testServerConfigR :: ServerConfig
 testServerConfigR = defaultServerConfig {
-    scAddresses = [("127.0.0.1",8003)]
+    scAddresses = [("127.0.0.1",8002)]
   }
 
 testClientConfig :: ClientConfig
@@ -85,7 +85,7 @@ withPipe scenario body = do
     let saS = addrAddress addrS
     irefC <- newIORef 0
     irefS <- newIORef 0
-    E.bracket (openSocket addrC) close $ \sockC ->
+    {-E.bracket (openSocket addrC) close $ \sockC ->
       E.bracket (openSocket addrS) close $ \sockS -> do
         setSocketOption sockC ReuseAddr 1
         setSocketOption sockS ReuseAddr 1
@@ -108,10 +108,10 @@ withPipe scenario body = do
             bs <- recv sockS 2048
             n <- atomicModifyIORef' irefS $ \x -> (x + 1, x)
             dropPacket <- shouldDrop scenario False n
-            unless dropPacket $ void $ send sockC bs
-        body
-        killThread tid0
-        killThread tid1
+            unless dropPacket $ void $ send sockC bs-}
+    body
+        {-killThread tid0
+        killThread tid1-}
   where
     hints = defaultHints { addrSocketType = Datagram }
     resolve port =

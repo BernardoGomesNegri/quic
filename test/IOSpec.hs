@@ -20,8 +20,8 @@ spec = do
     let cc = testClientConfigR
     describe "send & recv" $ do
         it "can exchange data on random dropping" $ do
-            withPipe (Randomly 20) $ testSendRecv cc sc 1000
-        it "can exchange data on server 0" $ do
+            withPipe (Randomly 20) $ testSendRecv cc sc 1
+        {-it "can exchange data on server 0" $ do
             withPipe (DropServerPacket [0]) $ testSendRecv cc sc 20
         it "can exchange data on server 1" $ do
             withPipe (DropServerPacket [1]) $ testSendRecv cc sc 20
@@ -68,7 +68,7 @@ spec = do
         it "can exchange data on client 10" $ do
             withPipe (DropClientPacket [10]) $ testSendRecv cc sc 20
         it "can exchange data on client 11" $ do
-            withPipe (DropClientPacket [11]) $ testSendRecv cc sc 20
+            withPipe (DropClientPacket [11]) $ testSendRecv cc sc 20-}
 
 testSendRecv :: C.ClientConfig -> ServerConfig -> Int -> IO ()
 testSendRecv cc sc times = do
@@ -78,14 +78,21 @@ testSendRecv cc sc times = do
     client mvar = do
         threadDelay 10000
         C.run cc $ \conn -> do
+            print "started client loop"
             strm <- stream conn
+            print "connected a stream to a server"
             let bs = BS.replicate 10000 0
             replicateM_ times $ sendStream strm bs
+            print "sent all data to server"
             shutdownStream strm
+            print "shutdown stream"
             takeMVar mvar `shouldReturn` ()
     server mvar = run sc $ \conn -> do
+        print "started server loop"
         strm <- acceptStream conn
+        print "accepted a client stream"
         bs <- recvStream strm 1024
+        print "received bytes from client"
         let len = BS.length bs
         n <- loop strm bs len
         n `shouldBe` (10000 * times)
@@ -95,6 +102,7 @@ testSendRecv cc sc times = do
         loop _    "" n = return n
         loop strm _  n = do
             bs <- recvStream strm 1024
+            print "received more bytes from client"
             let len = BS.length bs
                 n' = n + len
             loop strm bs n'
