@@ -108,8 +108,8 @@ withPipe scenario body = do
             bs <- recv sockS 2048
             n <- atomicModifyIORef' irefS $ \x -> (x + 1, x)
             dropPacket <- shouldDrop scenario False n
-            unless dropPacket $ void $ send sockC bs-}
-    body
+            unless dropPacket $ void $ send sockC bs
+        body
         killThread tid0
         killThread tid1
   where
