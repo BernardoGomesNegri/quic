@@ -251,13 +251,10 @@ processFrame conn RTT0Level (StreamF sid off (dat:_) fin) = do
     mstrm <- findStream conn sid
     guardStream conn sid mstrm
     strm <- maybe (createStream conn sid) return mstrm
-    if BS.length dat > off then
-        closeConnection FlowControlError "Flow control error in 0-RTT"
-    else do
-        let len = BS.length dat
-            rx = RxStreamData dat off len fin
-        ok <- putRxStreamData strm rx
-        unless ok $ closeConnection FlowControlError "Flow control error in 0-RTT"
+    let len = BS.length dat
+        rx = RxStreamData dat off len fin
+    ok <- putRxStreamData strm rx
+    unless ok $ closeConnection FlowControlError "Flow control error in 0-RTT"
 processFrame conn RTT1Level (StreamF sid _ [""] False) = do
     when (isSendOnly conn sid) $
         closeConnection StreamStateError "send-only stream"
