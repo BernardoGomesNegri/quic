@@ -35,6 +35,7 @@ import System.Log.FastLogger
 import qualified UnliftIO.Exception as E
 import System.IO
 
+import Network.QUIC.Server.CID
 import Network.QUIC.Config
 import Network.QUIC.Connection
 import Network.QUIC.Connector
@@ -88,7 +89,7 @@ unregisterConnectionDict ref cid = atomicModifyIORef'' ref $
 ----------------------------------------------------------------
 
 -- Original destination CID -> RecvQ
-data RecvQDict = RecvQDict Int (OrdPSQ CID Int RecvQ)
+data RecvQDict = RecvQDict Int (OrdPSQ ServerCID Int RecvQ)
 
 recvQDictSize :: Int
 recvQDictSize = 100
@@ -96,14 +97,14 @@ recvQDictSize = 100
 emptyRecvQDict :: RecvQDict
 emptyRecvQDict = RecvQDict 0 PSQ.empty
 
-lookupRecvQDict :: IORef RecvQDict -> CID -> IO (Maybe RecvQ)
+lookupRecvQDict :: IORef RecvQDict -> ServerCID -> IO (Maybe RecvQ)
 lookupRecvQDict ref dcid = do
     RecvQDict _ qt <- readIORef ref
     return $ case PSQ.lookup dcid qt of
       Nothing     -> Nothing
       Just (_,q)  -> Just q
 
-insertRecvQDict :: IORef RecvQDict -> CID -> RecvQ -> IO ()
+insertRecvQDict :: IORef RecvQDict -> ServerCID -> RecvQ -> IO ()
 insertRecvQDict ref dcid q = atomicModifyIORef'' ref ins
   where
     ins (RecvQDict p qt0) = let qt1 | PSQ.size qt0 <= recvQDictSize = qt0

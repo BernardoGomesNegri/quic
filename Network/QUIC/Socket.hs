@@ -2,12 +2,42 @@
 module Network.QUIC.Socket where
 
 import Control.Concurrent
+import Control.Concurrent.STM.TQueue(TQueue, readTQueue, writeTQueue)
+import Control.Concurrent.STM(atomically)
 import Data.IP hiding (addr)
 import qualified GHC.IO.Exception as E
 import Network.Socket
+import Network.Socket.ByteString as NSB (recv, send)
 import System.IO
 import qualified System.IO.Error as E
 import qualified UnliftIO.Exception as E
+import Data.ByteString as B (ByteString, length, take)
+
+-- The idea is that the server keeps a map of SockAddr to these, and anything that enters is matched to a ToClientSocket and written to its queue.
+data ToClientSocket = ToClientSocket {
+    readQ :: TQueue ByteString,
+    writeQ :: TQueue ByteString
+}
+
+class SocketLike a where
+    recv :: a -> Int -> IO B.ByteString
+    send :: a -> B.ByteString -> IO Int
+
+instance SocketLike Socket where
+    recv = NSB.recv
+    send = NSB.send
+
+instance SocketLike ToClientSocket where
+    recv (ToClientSocket {readQ = ourReadQ}) n = do
+        -- recv can send smaller stuff than asked, but never larger
+        bs <- atomically $ readTQueue ourReadQ
+        if B.length bs > n then
+            return $ B.take n bs
+        else
+            return bs
+
+    send (ToClientSocket {writeQ = ourWriteQ}) bs =
+        atomically (writeTQueue ourWriteQ bs) >> return (B.length bs)
 
 sockAddrFamily :: SockAddr -> Family
 sockAddrFamily SockAddrInet{}  = AF_INET
@@ -58,10 +88,10 @@ udpServerConnectedSocket mysa peersa = E.bracketOnError open close $ \s -> do
     family = sockAddrFamily mysa
     open   = socket family Datagram defaultProtocol
 
+udpClientSocket :: HostName -> ServiceName -> IO (Socket,SockAddr)
 #ifdef mingw32_HOST_OS
 udpClientSocket = udpClientConnectedSocket
 #else
-udpClientSocket :: HostName -> ServiceName -> IO (Socket,SockAddr)
 udpClientSocket host port = do
     addr <- head <$> getAddrInfo (Just hints) (Just host) (Just port)
     E.bracketOnError (openSocket addr) close $ \s -> do

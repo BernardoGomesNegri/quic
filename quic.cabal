@@ -92,6 +92,7 @@ library
                        Network.QUIC.Sender
                        Network.QUIC.Server.Reader
                        Network.QUIC.Server.Run
+                       Network.QUIC.Server.CID
                        Network.QUIC.Socket
                        Network.QUIC.Stream
                        Network.QUIC.Stream.Frag
@@ -141,7 +142,7 @@ library
                      , x509
   -- hs-source-dirs:
   default-language:    Haskell2010
-  ghc-options:         -Wall -Wcompat
+  ghc-options:         -Wall -Wcompat -Wno-name-shadowing
   default-extensions:  Strict StrictData
   if os(windows)
     cc-options:        -D_WINDOWS
