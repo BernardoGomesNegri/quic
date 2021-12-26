@@ -6,7 +6,6 @@ module Network.QUIC.Server.Reader (
   , newDispatch
   , clearDispatch
   , runDispatcher
-  , tokenMgr
   -- * Accepting
   , accept
   , Accept(..)
@@ -132,6 +131,7 @@ data Accept = Accept {
   , accUnregister   :: CID -> IO ()
   , accAddressValidated :: Bool
   , accTime         :: TimeMicrosecond
+  , accSock :: Socket
   }
 
 newtype AcceptQ = AcceptQ (TQueue Accept)
@@ -178,7 +178,7 @@ dispatcher d@Dispatch{sockTable = sockDict} conf (s,mysa) = handleLogUnit logAct
                     (pkt, bs0RTT) <- decodePacket bs0
             --        let send bs = void $ NSB.sendMsg s peersa [bs] cmsgs' 0
                     let send bs = void $ NSB.sendTo s bs peersa
-                    dispatch d conf logAction pkt mysa peersa send bs0RTT bytes now
+                    dispatch d conf logAction pkt mysa peersa send bs0RTT bytes now s
     doDebug = isJust $ scDebugLog conf
     logAction msg | doDebug   = stdoutLogger ("dispatch(er): " <> msg)
                   | otherwise = return ()
@@ -202,10 +202,10 @@ dispatcher d@Dispatch{sockTable = sockDict} conf (s,mysa) = handleLogUnit logAct
 -- retransmitted.
 -- For the other fragments, handshake will fail since its socket
 -- cannot be connected.
-dispatch :: Dispatch -> ServerConfig -> DebugLogger -> PacketI -> SockAddr -> SockAddr -> (ByteString -> IO ()) -> ByteString -> Int -> TimeMicrosecond -> IO ()
+dispatch :: Dispatch -> ServerConfig -> DebugLogger -> PacketI -> SockAddr -> SockAddr -> (ByteString -> IO ()) -> ByteString -> Int -> TimeMicrosecond -> Socket -> IO ()
 dispatch Dispatch{..} ServerConfig{..} logAction
          (PacketIC cpkt@(CryptPacket (Initial peerVer dCID sCID token) _) lvl)
-         mysa peersa send bs0RTT bytes tim
+         mysa peersa send bs0RTT bytes tim sock
   | bytes < defaultQUICPacketSize = do
         logAction $ "too small " <> bhow bytes <> ", " <> bhow peersa
   | peerVer `notElem` myVersions = do
@@ -258,6 +258,7 @@ dispatch Dispatch{..} ServerConfig{..} logAction
                     , accUnregister   = unreg
                     , accAddressValidated = addrValid
                     , accTime         = tim
+                    , accSock         = sock
                     }
               -- fixme: check acceptQ length
               writeAcceptQ acceptQ ent
@@ -322,13 +323,13 @@ dispatch Dispatch{..} ServerConfig{..} logAction
               bss <- encodeRetryPacket $ RetryPacket peerVer sCID newdCID newtoken (Left dCID)
               send bss
 dispatch Dispatch{..} _ _
-         (PacketIC cpkt@(CryptPacket (RTT0 _ o _) _) lvl) _ _peersa _ _ bytes tim = do
+         (PacketIC cpkt@(CryptPacket (RTT0 _ o _) _) lvl) _ _peersa _ _ bytes tim _ = do
     mq <- lookupRecvQDict srcTable o
     case mq of
       Just q  -> writeRecvQ q $ mkReceivedPacket cpkt tim bytes lvl
       Nothing -> return ()
 dispatch Dispatch{..} _ logAction
-         (PacketIC (CryptPacket hdr@(Short dCID) crypt) lvl) mysa peersa _ _ bytes tim  = do
+         (PacketIC (CryptPacket hdr@(Short dCID) crypt) lvl) mysa peersa _ _ bytes tim _ = do
     -- fixme: packets for closed connections also match here.
     mx <- lookupConnectionDict dstTable dCID
     case mx of
@@ -342,7 +343,7 @@ dispatch Dispatch{..} _ logAction
                     cpkt = CryptPacket hdr crypt'
                 writeRecvQ (connRecvQ conn) $ mkReceivedPacket cpkt tim bytes lvl
 
-dispatch _ _ _ _ipkt _ _peersa _ _ _ _ = return ()
+dispatch _ _ _ _ipkt _ _peersa _ _ _ _ _ = return ()
 
 ----------------------------------------------------------------
 

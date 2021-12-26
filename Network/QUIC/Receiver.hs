@@ -21,7 +21,6 @@ import Network.QUIC.Packet
 import Network.QUIC.Parameters
 import Network.QUIC.Qlog
 import Network.QUIC.Recovery
-import Network.QUIC.Server.Reader (runNewServerReader)
 import Network.QUIC.Stream
 import Network.QUIC.Types
 import Network.Socket (SockAddr)

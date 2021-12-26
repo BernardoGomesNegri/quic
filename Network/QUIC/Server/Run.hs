@@ -12,7 +12,6 @@ import System.Log.FastLogger
 import UnliftIO.Async
 import UnliftIO.Concurrent
 import Data.Map as M
-import Control.Concurrent.STM (writeTQueue, atomically)
 import qualified UnliftIO.Exception as E
 
 import Network.QUIC.Closer
@@ -92,7 +91,8 @@ runServer conf server0 dispatch@Dispatch{sockTable = sockDict} baseThreadId acc 
                       Right r -> return r
             E.trySyncOrAsync runThreads >>= closure conn ldcc
   where
-    open = createServerConnection conf dispatch acc baseThreadId
+    sock = accSock acc
+    open = createServerConnection conf dispatch acc baseThreadId sock
     clse connRes = do
         let conn = connResConnection connRes
         setDead conn
@@ -104,14 +104,14 @@ runServer conf server0 dispatch@Dispatch{sockTable = sockDict} baseThreadId acc 
         connDebugLog conn ("runServer: " <> msg)
         qlogDebug conn $ Debug $ toLogStr msg
 
-createServerConnection :: ServerConfig -> Dispatch -> Accept -> ThreadId
+createServerConnection :: ServerConfig -> Dispatch -> Accept -> ThreadId -> NS.Socket 
                        -> IO ConnRes
-createServerConnection conf@ServerConfig{..} dispatch@Dispatch{sockTable = sockDict} Accept{..} baseThreadId = do
+createServerConnection conf@ServerConfig{..} dispatch@Dispatch{sockTable = sockDict} Accept{..} baseThreadId sock = do
     s0 <- udpServerClientSocket sockDict accPeerSockAddr
     sref <- newIORef [s0]
     let send buf siz = void $ do
-            (ToClientSocket _ exitQ _):_ <- readIORef sref
-            atomically $ writeTQueue exitQ (buf,siz)
+            (ToClientSocket _ _ peer):_ <- readIORef sref
+            NS.sendBufTo sock buf siz peer
         recv = recvServer accRecvQ
     let Just myCID = initSrcCID accMyAuthCIDs
         Just ocid  = origDstCID accMyAuthCIDs

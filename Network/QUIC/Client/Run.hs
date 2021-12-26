@@ -28,7 +28,6 @@ import Network.QUIC.Recovery
 import Network.QUIC.Sender
 import Network.QUIC.Socket
 import Network.QUIC.Types
-import Network.QUIC.Server.Reader (runNewServerReader)
 
 ----------------------------------------------------------------
 
