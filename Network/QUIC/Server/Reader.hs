@@ -333,11 +333,7 @@ dispatch Dispatch{..} _ _
       Just q  -> writeRecvQ q $ mkReceivedPacket cpkt tim bytes lvl
       Nothing -> return ()
 dispatch Dispatch{..} _ logAction
-<<<<<<< HEAD
-         (PacketIC (CryptPacket hdr@(Short dCID) crypt) lvl) mysa peersa _ _ bytes tim _ = do
-=======
-         (PacketIC cpkt@(CryptPacket hdr _crypt) lvl) _mysa peersa _ _ bytes tim  = do
->>>>>>> upstream/windows
+         (PacketIC cpkt@(CryptPacket hdr _crypt) lvl) _mysa peersa _ _ bytes tim _ = do
     -- fixme: packets for closed connections also match here.
     let dCID = headerMyCID hdr
     mx <- lookupConnectionDict dstTable dCID
