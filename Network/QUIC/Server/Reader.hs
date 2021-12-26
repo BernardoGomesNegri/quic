@@ -166,10 +166,14 @@ dispatcher d@Dispatch{sockTable = sockDict} conf (s,mysa) = handleLogUnit logAct
         forever $ do
     --        (peersa, bs0, _cmsgs, _) <- recv
             (bs0, peersa) <- recv
+            print "got stuff from client"
             (SockDict sockDict') <- readIORef sockDict
             case M.lookup peersa sockDict' of
-                Just (ToClientSocket entryQ _ _) -> atomically $ writeTQueue entryQ bs0
+                Just (ToClientSocket entryQ _ _) -> do
+                    print "matched stuff with client"
+                    atomically $ writeTQueue entryQ bs0
                 Nothing -> do
+                    print "new peer that is not on dictionary"
                     let bytes = BS.length bs0 -- both Initial and 0RTT
                     now <- getTimeMicrosecond
                     print (bytes, now) >> hFlush stdout
