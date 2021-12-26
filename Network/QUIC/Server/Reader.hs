@@ -2,7 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Network.QUIC.Server.Reader (
-    Dispatch
+    Dispatch(..)
   , newDispatch
   , clearDispatch
   , runDispatcher
@@ -16,6 +16,8 @@ module Network.QUIC.Server.Reader (
   , readerServer
   -- * Misc
   , runNewServerReader
+  , udpServerClientSocket
+  , SockDict(..)
   ) where
 
 import Control.Concurrent
@@ -35,7 +37,6 @@ import System.Log.FastLogger
 import qualified UnliftIO.Exception as E
 import System.IO
 
-import Network.QUIC.Server.CID
 import Network.QUIC.Config
 import Network.QUIC.Connection
 import Network.QUIC.Connector
@@ -54,6 +55,7 @@ data Dispatch = Dispatch {
     tokenMgr :: CT.TokenManager
   , dstTable :: IORef ConnectionDict
   , srcTable :: IORef RecvQDict
+  , sockTable :: IORef SockDict
   , acceptQ  :: AcceptQ
   }
 
@@ -61,6 +63,7 @@ newDispatch :: IO Dispatch
 newDispatch = Dispatch <$> CT.spawnTokenManager CT.defaultConfig
                        <*> newIORef emptyConnectionDict
                        <*> newIORef emptyRecvQDict
+                       <*> newIORef (SockDict M.empty)
                        <*> newAcceptQ
 
 clearDispatch :: Dispatch -> IO ()
@@ -69,6 +72,8 @@ clearDispatch d = CT.killTokenManager $ tokenMgr d
 ----------------------------------------------------------------
 
 newtype ConnectionDict = ConnectionDict (Map CID Connection)
+
+newtype SockDict = SockDict (Map SockAddr ToClientSocket)
 
 emptyConnectionDict :: ConnectionDict
 emptyConnectionDict = ConnectionDict M.empty
@@ -89,7 +94,7 @@ unregisterConnectionDict ref cid = atomicModifyIORef'' ref $
 ----------------------------------------------------------------
 
 -- Original destination CID -> RecvQ
-data RecvQDict = RecvQDict Int (OrdPSQ ServerCID Int RecvQ)
+data RecvQDict = RecvQDict Int (OrdPSQ CID Int RecvQ)
 
 recvQDictSize :: Int
 recvQDictSize = 100
@@ -97,14 +102,14 @@ recvQDictSize = 100
 emptyRecvQDict :: RecvQDict
 emptyRecvQDict = RecvQDict 0 PSQ.empty
 
-lookupRecvQDict :: IORef RecvQDict -> ServerCID -> IO (Maybe RecvQ)
+lookupRecvQDict :: IORef RecvQDict -> CID -> IO (Maybe RecvQ)
 lookupRecvQDict ref dcid = do
     RecvQDict _ qt <- readIORef ref
     return $ case PSQ.lookup dcid qt of
       Nothing     -> Nothing
       Just (_,q)  -> Just q
 
-insertRecvQDict :: IORef RecvQDict -> ServerCID -> RecvQ -> IO ()
+insertRecvQDict :: IORef RecvQDict -> CID -> RecvQ -> IO ()
 insertRecvQDict ref dcid q = atomicModifyIORef'' ref ins
   where
     ins (RecvQDict p qt0) = let qt1 | PSQ.size qt0 <= recvQDictSize = qt0
@@ -150,7 +155,7 @@ runDispatcher d conf ssa@(s,_) =
     forkFinally (dispatcher d conf ssa) $ \_ -> close s
 
 dispatcher :: Dispatch -> ServerConfig -> (Socket, SockAddr) -> IO ()
-dispatcher d conf (s,mysa) = handleLogUnit logAction body
+dispatcher d@Dispatch{sockTable = sockDict} conf (s,mysa) = handleLogUnit logAction body
   where
     body = do
     --    let (opt,_cmsgid) = case mysa of
@@ -161,15 +166,19 @@ dispatcher d conf (s,mysa) = handleLogUnit logAction body
         forever $ do
     --        (peersa, bs0, _cmsgs, _) <- recv
             (bs0, peersa) <- recv
-            let bytes = BS.length bs0 -- both Initial and 0RTT
-            now <- getTimeMicrosecond
-            print (bytes, now) >> hFlush stdout
-            -- macOS overrides the local address of the socket
-            -- if in_pktinfo is used.
-            (pkt, bs0RTT) <- decodePacket bs0
-    --        let send bs = void $ NSB.sendMsg s peersa [bs] cmsgs' 0
-            let send bs = void $ NSB.sendTo s bs peersa
-            dispatch d conf logAction pkt mysa peersa send bs0RTT bytes now
+            (SockDict sockDict') <- readIORef sockDict
+            case M.lookup peersa sockDict' of
+                Just (ToClientSocket entryQ _ _) -> atomically $ writeTQueue entryQ bs0
+                Nothing -> do
+                    let bytes = BS.length bs0 -- both Initial and 0RTT
+                    now <- getTimeMicrosecond
+                    print (bytes, now) >> hFlush stdout
+                    -- macOS overrides the local address of the socket
+                    -- if in_pktinfo is used.
+                    (pkt, bs0RTT) <- decodePacket bs0
+            --        let send bs = void $ NSB.sendMsg s peersa [bs] cmsgs' 0
+                    let send bs = void $ NSB.sendTo s bs peersa
+                    dispatch d conf logAction pkt mysa peersa send bs0RTT bytes now
     doDebug = isJust $ scDebugLog conf
     logAction msg | doDebug   = stdoutLogger ("dispatch(er): " <> msg)
                   | otherwise = return ()
@@ -337,15 +346,31 @@ dispatch _ _ _ _ipkt _ _peersa _ _ _ _ = return ()
 
 ----------------------------------------------------------------
 
+udpServerClientSocket :: IORef SockDict -> SockAddr -> IO ToClientSocket
+udpServerClientSocket table peersa = do
+    (entryQ, exitQ) <- atomically ((,) <$> newTQueue <*> newTQueue)
+    let toSock = ToClientSocket entryQ exitQ peersa
+    atomicModifyIORef'' table $ \(SockDict d) -> (SockDict . M.insert peersa toSock) d
+    return toSock
+
 -- | readerServer dies when the socket is closed.
-readerServer :: Socket -> Connection -> IO ()
-readerServer s conn = handleLogUnit logAction loop
+readerServer :: ToClientSocket -> Connection -> IORef SockDict -> IO ()
+readerServer (ToClientSocket entryQ _ peer) conn sockDict = handleLogUnit logAction loop
   where
     loop = do
-        ito <- readMinIdleTimeout conn
-        mbs <- timeout ito $ NSB.recv s maximumUdpPayloadSize
+        (Microseconds ito) <- readMinIdleTimeout conn
+        delayBox <- registerDelay ito
+        mbs <- atomically $ do
+            timeouted <- readTVar delayBox
+            if timeouted then
+                return Nothing
+            else do
+                item <- tryReadTQueue entryQ
+                case item of
+                    Nothing -> retry
+                    Just x -> return (return x)
         case mbs of
-          Nothing -> close s
+          Nothing -> closeTC
           Just bs -> do
               now <- getTimeMicrosecond
               let bytes = BS.length bs
@@ -353,6 +378,7 @@ readerServer s conn = handleLogUnit logAction loop
               pkts <- decodeCryptPackets bs
               mapM_ (\(p,l) -> writeRecvQ (connRecvQ conn) (mkReceivedPacket p now bytes l)) pkts
               loop
+    closeTC = atomicModifyIORef'' sockDict (\(SockDict x) -> SockDict $ M.delete peer x)
     logAction msg = connDebugLog conn ("debug: readerServer: " <> msg)
 
 recvServer :: RecvQ -> IO ReceivedPacket
@@ -360,8 +386,8 @@ recvServer = readRecvQ
 
 ----------------------------------------------------------------
 
-runNewServerReader :: Connection -> SockAddr -> SockAddr -> CID -> IO ()
-runNewServerReader conn mysa peersa dCID = handleLogUnit logAction $ do
+runNewServerReader :: Connection -> IORef SockDict -> SockAddr -> CID -> IO ()
+runNewServerReader conn sockDict peersa dCID = handleLogUnit logAction $ do
     migrating <- isPathValidating conn -- fixme: test and set
     unless migrating $ do
         setMigrationStarted conn
@@ -370,14 +396,14 @@ runNewServerReader conn mysa peersa dCID = handleLogUnit logAction $ do
         let msg = "Migration: " <> bhow peersa <> " (" <> bhow dCID <> ")"
         qlogDebug conn $ Debug $ toLogStr msg
         connDebugLog conn $ "debug: runNewServerReader: " <> msg
-        E.bracketOnError setup close $ \s1 ->
-            E.bracket (addSocket conn s1) close $ \_ -> do
-                void $ forkIO $ readerServer s1 conn
-                -- fixme: if cannot set
-                setMyCID conn dCID
-                validatePath conn mcidinfo
-                -- holding the old socket for a while
-                delay $ Microseconds 20000
+        E.bracketOnError setup closeTC $ \s1 -> do
+            void $ forkIO $ readerServer s1 conn sockDict
+            -- fixme: if cannot set
+            setMyCID conn dCID
+            validatePath conn mcidinfo
+            -- holding the old socket for a while
+            delay $ Microseconds 20000
   where
-    setup = udpServerConnectedSocket mysa peersa
+    closeTC _ = atomicModifyIORef'' sockDict (\(SockDict x) -> SockDict $ M.delete peersa x)
+    setup = udpServerClientSocket sockDict peersa
     logAction msg = connDebugLog conn ("debug: runNewServerReader: " <> msg)

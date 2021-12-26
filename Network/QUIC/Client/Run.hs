@@ -28,6 +28,7 @@ import Network.QUIC.Recovery
 import Network.QUIC.Sender
 import Network.QUIC.Socket
 import Network.QUIC.Types
+import Network.QUIC.Server.Reader (runNewServerReader)
 
 ----------------------------------------------------------------
 
@@ -69,7 +70,7 @@ runClient conf client0 isICVN verInfo = do
             ldcc = connLDCC conn
             supporters = foldr1 concurrently_ [handshaker
                                               ,sender   conn
-                                              ,receiver conn
+                                              ,receiver conn (runNewClientReader conn)
                                               ,resender  ldcc
                                               ,ldccTimer ldcc
                                               ]

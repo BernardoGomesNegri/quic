@@ -11,6 +11,8 @@ import qualified Network.Socket as NS
 import System.Log.FastLogger
 import UnliftIO.Async
 import UnliftIO.Concurrent
+import Data.Map as M
+import Control.Concurrent.STM (writeTQueue, atomically)
 import qualified UnliftIO.Exception as E
 
 import Network.QUIC.Closer
@@ -62,7 +64,7 @@ run conf server = NS.withSocketsDo $ handleLogUnit debugLog $ do
 -- Typically, ConnectionIsClosed breaks acceptStream.
 -- And the exception should be ignored.
 runServer :: ServerConfig -> (Connection -> IO ()) -> Dispatch -> ThreadId -> Accept -> IO ()
-runServer conf server0 dispatch baseThreadId acc =
+runServer conf server0 dispatch@Dispatch{sockTable = sockDict} baseThreadId acc =
     E.bracket open clse $ \(ConnRes conn myAuthCIDs reader) ->
         handleLogUnit (debugLog conn) $ do
             forkIO reader >>= addReader conn
@@ -79,7 +81,7 @@ runServer conf server0 dispatch baseThreadId acc =
                 ldcc = connLDCC conn
                 supporters = foldr1 concurrently_ [handshaker
                                                   ,sender   conn
-                                                  ,receiver conn
+                                                  ,receiver conn (\_ peer _ -> newToClientSocket peer >>= \sock -> atomicModifyIORef'' sockDict (\(SockDict x) -> SockDict $ M.insert peer sock x))
                                                   ,resender  ldcc
                                                   ,ldccTimer ldcc
                                                   ]
@@ -104,19 +106,20 @@ runServer conf server0 dispatch baseThreadId acc =
 
 createServerConnection :: ServerConfig -> Dispatch -> Accept -> ThreadId
                        -> IO ConnRes
-createServerConnection conf@ServerConfig{..} dispatch Accept{..} baseThreadId = do
-    s0 <- udpServerConnectedSocket accMySockAddr accPeerSockAddr
+createServerConnection conf@ServerConfig{..} dispatch@Dispatch{sockTable = sockDict} Accept{..} baseThreadId = do
+    s0 <- udpServerClientSocket sockDict accPeerSockAddr
     sref <- newIORef [s0]
     let send buf siz = void $ do
-            s:_ <- readIORef sref
-            NS.sendBuf s buf siz
+            (ToClientSocket _ exitQ _):_ <- readIORef sref
+            atomically $ writeTQueue exitQ (buf,siz)
         recv = recvServer accRecvQ
     let Just myCID = initSrcCID accMyAuthCIDs
         Just ocid  = origDstCID accMyAuthCIDs
     (qLog, qclean)     <- dirQLogger scQLog accTime ocid "server"
     (debugLog, dclean) <- dirDebugLogger scDebugLog ocid
     debugLog $ "Original CID: " <> bhow ocid
-    conn <- serverConnection conf accVersionInfo accMyAuthCIDs accPeerAuthCIDs debugLog qLog scHooks sref accRecvQ send recv
+    sref' <- newIORef []
+    conn <- serverConnection conf accVersionInfo accMyAuthCIDs accPeerAuthCIDs debugLog qLog scHooks sref' accRecvQ send recv
     addResource conn qclean
     addResource conn dclean
     let cid = fromMaybe ocid $ retrySrcCID accMyAuthCIDs
@@ -146,7 +149,7 @@ createServerConnection conf@ServerConfig{..} dispatch Accept{..} baseThreadId = 
         myCIDs <- getMyCIDs conn
         mapM_ accUnregister myCIDs
     --
-    let reader = readerServer s0 conn -- dies when s0 is closed.
+    let reader = readerServer s0 conn sockDict -- dies when s0 is closed.
     return $ ConnRes conn accMyAuthCIDs reader
 
 afterHandshakeServer :: Connection -> IO ()

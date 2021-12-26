@@ -3,6 +3,7 @@
 
 module Network.QUIC.Client.Reader (
     readerClient
+  , runNewClientReader
   , recvClient
   , ConnectionControl(..)
   , controlConnection
@@ -11,7 +12,7 @@ module Network.QUIC.Client.Reader (
 import Control.Concurrent
 import qualified Data.ByteString as BS
 import Data.List (intersect)
-import Network.Socket (Socket, getSocketName, getPeerName, close)
+import Network.Socket (Socket, getSocketName, getPeerName, close, SockAddr)
 import qualified Network.Socket.ByteString as NSB
 import qualified UnliftIO.Exception as E
 
@@ -26,6 +27,8 @@ import Network.QUIC.Qlog
 import Network.QUIC.Recovery
 import Network.QUIC.Socket
 import Network.QUIC.Types
+import Network.QUIC.Logger (bhow)
+import System.Log.FastLogger (ToLogStr(toLogStr))
 
 -- | readerClient dies when the socket is closed.
 readerClient :: Socket -> Connection -> IO ()
@@ -164,3 +167,44 @@ rebind conn microseconds = do
     let reader = readerClient s1 conn
     forkIO reader >>= addReader conn
     fire conn microseconds $ close s0
+
+-- Copy-paste of old function because the client depends on this
+readerClient' :: Socket -> Connection -> IO ()
+readerClient' s conn = handleLogUnit logAction loop
+  where
+    loop = do
+        ito <- readMinIdleTimeout conn
+        mbs <- timeout ito $ NSB.recv s maximumUdpPayloadSize
+        case mbs of
+          Nothing -> close s
+          Just bs -> do
+              now <- getTimeMicrosecond
+              let bytes = BS.length bs
+              addRxBytes conn bytes
+              pkts <- decodeCryptPackets bs
+              mapM_ (\(p,l) -> writeRecvQ (connRecvQ conn) (mkReceivedPacket p now bytes l)) pkts
+              loop
+    logAction msg = connDebugLog conn ("debug: readerServer: " <> msg)
+
+-- Copy-paste of old function because the client depends on this
+runNewClientReader :: Connection -> SockAddr -> SockAddr -> CID -> IO ()
+runNewClientReader conn mysa peersa dCID = handleLogUnit logAction $ do
+    migrating <- isPathValidating conn -- fixme: test and set
+    unless migrating $ do
+        setMigrationStarted conn
+        -- fixme: should not block
+        mcidinfo <- timeout (Microseconds 100000) $ waitPeerCID conn
+        let msg = "Migration: " <> bhow peersa <> " (" <> bhow dCID <> ")"
+        qlogDebug conn $ Debug $ toLogStr msg
+        connDebugLog conn $ "debug: runNewServerReader: " <> msg
+        E.bracketOnError setup close $ \s1 ->
+            E.bracket (addSocket conn s1) close $ \_ -> do
+                void $ forkIO $ readerClient' s1 conn
+                -- fixme: if cannot set
+                setMyCID conn dCID
+                validatePath conn mcidinfo
+                -- holding the old socket for a while
+                delay $ Microseconds 20000
+  where
+    setup = udpClientConnectedSocket' mysa peersa
+    logAction msg = connDebugLog conn ("debug: runNewServerReader: " <> msg)

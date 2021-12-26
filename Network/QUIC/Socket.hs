@@ -2,30 +2,34 @@
 module Network.QUIC.Socket where
 
 import Control.Concurrent
-import Control.Concurrent.STM.TQueue(TQueue, readTQueue, writeTQueue)
+import Control.Concurrent.STM.TQueue(TQueue, readTQueue, writeTQueue, newTQueueIO)
 import Control.Concurrent.STM(atomically)
 import Data.IP hiding (addr)
 import qualified GHC.IO.Exception as E
 import Network.Socket
-import Network.Socket.ByteString as NSB (recv, send)
+import Network.Socket.ByteString as NSB (recv)
 import System.IO
 import qualified System.IO.Error as E
 import qualified UnliftIO.Exception as E
 import Data.ByteString as B (ByteString, length, take)
+import Network.ByteOrder (Buffer, Word8)
+import Foreign.Ptr(Ptr)
 
 -- The idea is that the server keeps a map of SockAddr to these, and anything that enters is matched to a ToClientSocket and written to its queue.
+-- It is deliberately not transferred during migrations
 data ToClientSocket = ToClientSocket {
     readQ :: TQueue ByteString,
-    writeQ :: TQueue ByteString
+    writeQ :: TQueue (Buffer,Int),
+    peer :: SockAddr
 }
 
 class SocketLike a where
     recv :: a -> Int -> IO B.ByteString
-    send :: a -> B.ByteString -> IO Int
+    send :: a -> Ptr Word8 -> Int -> IO Int
 
 instance SocketLike Socket where
     recv = NSB.recv
-    send = NSB.send
+    send = sendBuf
 
 instance SocketLike ToClientSocket where
     recv (ToClientSocket {readQ = ourReadQ}) n = do
@@ -36,8 +40,14 @@ instance SocketLike ToClientSocket where
         else
             return bs
 
-    send (ToClientSocket {writeQ = ourWriteQ}) bs =
-        atomically (writeTQueue ourWriteQ bs) >> return (B.length bs)
+    send (ToClientSocket {writeQ = ourWriteQ}) wordptr n =
+        atomically (writeTQueue ourWriteQ (wordptr,n)) >> return n
+
+newToClientSocket :: SockAddr -> IO ToClientSocket
+newToClientSocket addr = do
+    entryQ <- newTQueueIO
+    exitQ <- newTQueueIO
+    return $ ToClientSocket entryQ exitQ addr
 
 sockAddrFamily :: SockAddr -> Family
 sockAddrFamily SockAddrInet{}  = AF_INET
@@ -61,8 +71,9 @@ udpServerListenSocket ip = E.bracketOnError open close $ \s -> do
     family = sockAddrFamily sa
     open   = socket family Datagram defaultProtocol
 
-udpServerConnectedSocket :: SockAddr -> SockAddr -> IO Socket
-udpServerConnectedSocket mysa peersa = E.bracketOnError open close $ \s -> do
+-- | Left here for compatibility purposes with client. DO NOT USE ON SERVER. See https://github.com/kazu-yamamoto/quic/pull/30#issuecomment-1000676443
+udpClientConnectedSocket' :: SockAddr -> SockAddr -> IO Socket
+udpClientConnectedSocket' mysa peersa = E.bracketOnError open close $ \s -> do
     putStrLn "udpServerConnectedSocket" >> hFlush stdout
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded

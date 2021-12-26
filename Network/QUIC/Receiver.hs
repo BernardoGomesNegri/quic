@@ -24,9 +24,10 @@ import Network.QUIC.Recovery
 import Network.QUIC.Server.Reader (runNewServerReader)
 import Network.QUIC.Stream
 import Network.QUIC.Types
+import Network.Socket (SockAddr)
 
-receiver :: Connection -> IO ()
-receiver conn = handleLogT logAction body
+receiver :: Connection -> (SockAddr -> SockAddr -> CID -> IO ()) -> IO ()
+receiver conn newSock = handleLogT logAction body
   where
     body = do
         loopHandshake
@@ -41,7 +42,7 @@ receiver conn = handleLogT logAction body
           Just x  -> return x
     loopHandshake = do
         rpkt <- recvTimeout
-        processReceivedPacketHandshake conn rpkt
+        processReceivedPacketHandshake conn rpkt newSock
         established <- isConnectionEstablished conn
         unless established loopHandshake
     loopEstablished = forever $ do
@@ -59,7 +60,7 @@ receiver conn = handleLogT logAction body
                     register <- getRegister conn
                     register (cidInfoCID cidInfo) conn
                 sendFrames conn RTT1Level [NewConnectionID cidInfo 0]
-            processReceivedPacket conn rpkt
+            processReceivedPacket conn rpkt newSock
             shouldUpdatePeer <- if shouldUpdate then shouldUpdatePeerCID conn
                                                 else return False
             when shouldUpdatePeer $ choosePeerCIDForPrivacy conn
@@ -68,8 +69,8 @@ receiver conn = handleLogT logAction body
             connDebugLog conn $ bhow cid <> " is unknown"
     logAction msg = connDebugLog conn ("debug: receiver: " <> msg)
 
-processReceivedPacketHandshake :: Connection -> ReceivedPacket -> IO ()
-processReceivedPacketHandshake conn rpkt = do
+processReceivedPacketHandshake :: Connection -> ReceivedPacket -> (SockAddr -> SockAddr -> CID -> IO ()) -> IO ()
+processReceivedPacketHandshake conn rpkt newSock = do
     let CryptPacket hdr _ = rpCryptPacket rpkt
         lvl = rpEncryptionLevel rpkt
     mx <- timeout (Microseconds 10000) $ waitEncryptionLevel conn lvl
@@ -97,7 +98,7 @@ processReceivedPacketHandshake conn rpkt = do
                         setVersion conn peerVer
                         initializeCoder conn InitialLevel $ initialSecrets peerVer $ clientDstCID conn
                 _ -> return ()
-              processReceivedPacket conn rpkt
+              processReceivedPacket conn rpkt newSock
         | otherwise -> do
               mycid <- getMyCID conn
               when (lvl == HandshakeLevel
@@ -110,10 +111,10 @@ processReceivedPacketHandshake conn rpkt = do
                       dropSecrets conn InitialLevel
                       clearCryptoStream conn InitialLevel
                       onPacketNumberSpaceDiscarded ldcc InitialLevel
-              processReceivedPacket conn rpkt
+              processReceivedPacket conn rpkt newSock
 
-processReceivedPacket :: Connection -> ReceivedPacket -> IO ()
-processReceivedPacket conn rpkt = do
+processReceivedPacket :: Connection -> ReceivedPacket -> (SockAddr -> SockAddr -> CID -> IO ()) -> IO ()
+processReceivedPacket conn rpkt newSock = do
     let CryptPacket hdr crypt = rpCryptPacket rpkt
         lvl = rpEncryptionLevel rpkt
         tim = rpTimeRecevied rpkt
@@ -138,7 +139,7 @@ processReceivedPacket conn rpkt = do
               case cryptMigraionInfo crypt of
                 Nothing -> return ()
                 Just (MigrationInfo mysa peersa dCID) ->
-                    void . forkIO $ runNewServerReader conn mysa peersa dCID
+                    void . forkIO $ newSock mysa peersa dCID
               (ckp,cpn) <- getCurrentKeyPhase conn
               let Flags flags = plainFlags
                   nkp = flags `testBit` 2

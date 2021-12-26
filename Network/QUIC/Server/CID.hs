@@ -3,7 +3,7 @@ import Network.QUIC.Imports (Bytes, shortToString, enc16s)
 import Network.QUIC.Socket(ToClientSocket)
 import Network.QUIC.Types.CID(CID(..))
 
-data ServerCID = ServerCID {cidBytes :: Bytes, cidToClientSock :: ToClientSocket}
+data ServerCID = ServerCID {scidBytes :: Bytes, scidToClientSock :: ToClientSocket}
 instance Eq ServerCID where
     (ServerCID a _) == (ServerCID b _) = a == b
 instance Ord ServerCID where
