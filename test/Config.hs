@@ -76,6 +76,7 @@ setClientQlog cc = cc
 data Scenario = Randomly Int
               | DropClientPacket [Int]
               | DropServerPacket [Int]
+              | Never
 
 withPipe :: Scenario -> IO () -> IO ()
 withPipe scenario body = do
@@ -125,6 +126,7 @@ withPipe scenario body = do
     shouldDrop (DropServerPacket ns) fromC pn
       | fromC     = return False
       | otherwise = return (pn `elem` ns)
+    shouldDrop Never _ _ = return False
 
 chooseALPN :: Version -> [ByteString] -> IO ByteString
 chooseALPN _ver protos = return $ case mh3idx of

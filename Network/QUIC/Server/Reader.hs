@@ -38,7 +38,6 @@ import System.IO
 
 import Network.QUIC.Config
 import Network.QUIC.Connection
-import Network.QUIC.Connector
 import Network.QUIC.Exception
 import Network.QUIC.Imports
 import Network.QUIC.Logger
@@ -166,14 +165,14 @@ dispatcher d@Dispatch{sockTable = sockDict} conf (s,mysa) = handleLogUnit logAct
         forever $ do
     --        (peersa, bs0, _cmsgs, _) <- recv
             (bs0, peersa) <- recv
-            print "got stuff from client"
-            (SockDict sockDict') <- readIORef sockDict
+            putStrLn "server: got stuff from client"
+            (SockDict sockDict') <- atomicModifyIORef sockDict (\x -> (x,x))
             case M.lookup peersa sockDict' of
                 Just (ToClientSocket entryQ _ _) -> do
-                    print "matched stuff with client"
+                    putStrLn "server: matched stuff with client"
                     atomically $ writeTQueue entryQ bs0
                 Nothing -> do
-                    print "new peer that is not on dictionary"
+                    putStrLn "server: new peer that is not on dictionary"
                     let bytes = BS.length bs0 -- both Initial and 0RTT
                     now <- getTimeMicrosecond
                     print (bytes, now) >> hFlush stdout
@@ -373,7 +372,9 @@ readerServer (ToClientSocket entryQ _ peer) conn sockDict = handleLogUnit logAct
                     Nothing -> retry
                     Just x -> return (return x)
         case mbs of
-          Nothing -> closeTC
+          Nothing -> do 
+              putStrLn "server: no data, closing socket"
+              closeTC
           Just bs -> do
               now <- getTimeMicrosecond
               let bytes = BS.length bs

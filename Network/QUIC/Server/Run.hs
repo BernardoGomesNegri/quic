@@ -41,7 +41,7 @@ import Network.QUIC.Types
 --   in a new lightweight thread.
 run :: ServerConfig -> (Connection -> IO ()) -> IO ()
 run conf server = NS.withSocketsDo $ handleLogUnit debugLog $ do
-    print "started server"
+    putStrLn "server: started server"
     baseThreadId <- myThreadId
     E.bracket setup teardown $ \(dispatch,_) -> forever $ do
         acc <- accept dispatch
@@ -112,7 +112,7 @@ createServerConnection conf@ServerConfig{..} dispatch@Dispatch{sockTable = sockD
     sref <- newIORef [s0]
     let send buf siz = void $ do
             (ToClientSocket _ _ peer):_ <- readIORef sref
-            print "sending stuff"
+            putStrLn "server: sending stuff"
             NS.sendBufTo sock buf siz peer
         recv = recvServer accRecvQ
     let Just myCID = initSrcCID accMyAuthCIDs
