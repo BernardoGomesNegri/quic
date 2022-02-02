@@ -14,7 +14,6 @@ module Network.QUIC.Server.Reader (
   , recvServer
   , readerServer
   -- * Misc
-  , runNewServerReader
   , udpServerClientSocket
   , SockDict(..)
   ) where
@@ -32,19 +31,16 @@ import Network.ByteOrder
 import Network.Socket hiding (accept, Debug)
 import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
-import System.Log.FastLogger
 import qualified UnliftIO.Exception as E
 import System.IO
 
 import Network.QUIC.Config
 import Network.QUIC.Connection
-import Network.QUIC.Connector
 import Network.QUIC.Exception
 import Network.QUIC.Imports
 import Network.QUIC.Logger
 import Network.QUIC.Packet
 import Network.QUIC.Parameters
-import Network.QUIC.Qlog
 import Network.QUIC.Socket
 import Network.QUIC.Types
 
@@ -333,11 +329,7 @@ dispatch Dispatch{..} _ _
       Just q  -> writeRecvQ q $ mkReceivedPacket cpkt tim bytes lvl
       Nothing -> return ()
 dispatch Dispatch{..} _ logAction
-<<<<<<< HEAD
-         (PacketIC (CryptPacket hdr@(Short dCID) crypt) lvl) mysa peersa _ _ bytes tim _ = do
-=======
-         (PacketIC cpkt@(CryptPacket hdr _crypt) lvl) _mysa peersa _ _ bytes tim  = do
->>>>>>> upstream/windows
+         (PacketIC cpkt@(CryptPacket hdr _crypt) lvl) _mysa peersa _ _ bytes tim _ = do
     -- fixme: packets for closed connections also match here.
     let dCID = headerMyCID hdr
     mx <- lookupConnectionDict dstTable dCID
@@ -390,27 +382,3 @@ readerServer (ToClientSocket entryQ _ peer) conn sockDict = handleLogUnit logAct
 
 recvServer :: RecvQ -> IO ReceivedPacket
 recvServer = readRecvQ
-
-----------------------------------------------------------------
-
-runNewServerReader :: Connection -> IORef SockDict -> SockAddr -> CID -> IO ()
-runNewServerReader conn sockDict peersa dCID = handleLogUnit logAction $ do
-    migrating <- isPathValidating conn -- fixme: test and set
-    unless migrating $ do
-        setMigrationStarted conn
-        -- fixme: should not block
-        mcidinfo <- timeout (Microseconds 100000) $ waitPeerCID conn
-        let msg = "Migration: " <> bhow peersa <> " (" <> bhow dCID <> ")"
-        qlogDebug conn $ Debug $ toLogStr msg
-        connDebugLog conn $ "debug: runNewServerReader: " <> msg
-        E.bracketOnError setup closeTC $ \s1 -> do
-            void $ forkIO $ readerServer s1 conn sockDict
-            -- fixme: if cannot set
-            setMyCID conn dCID
-            validatePath conn mcidinfo
-            -- holding the old socket for a while
-            delay $ Microseconds 20000
-  where
-    closeTC _ = atomicModifyIORef'' sockDict (\(SockDict x) -> SockDict $ M.delete peersa x)
-    setup = udpServerClientSocket sockDict peersa
-    logAction msg = connDebugLog conn ("debug: runNewServerReader: " <> msg)
