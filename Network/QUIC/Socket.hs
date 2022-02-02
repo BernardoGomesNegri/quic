@@ -2,18 +2,15 @@
 module Network.QUIC.Socket where
 
 import Control.Concurrent
-import Control.Concurrent.STM.TQueue(TQueue, readTQueue, writeTQueue, newTQueueIO)
-import Control.Concurrent.STM(atomically)
+import Control.Concurrent.STM.TQueue(TQueue, newTQueueIO)
 import Data.IP hiding (addr)
 import qualified GHC.IO.Exception as E
 import Network.Socket
-import Network.Socket.ByteString as NSB (recv)
 import System.IO
 import qualified System.IO.Error as E
 import qualified UnliftIO.Exception as E
-import Data.ByteString as B (ByteString, length, take)
-import Network.ByteOrder (Buffer, Word8)
-import Foreign.Ptr(Ptr)
+import Data.ByteString as B (ByteString)
+import Network.ByteOrder (Buffer)
 
 -- The idea is that the server keeps a map of SockAddr to these, and anything that enters is matched to a ToClientSocket and written to its queue.
 -- It is deliberately not transferred during migrations
@@ -22,26 +19,6 @@ data ToClientSocket = ToClientSocket {
     writeQ :: TQueue (Buffer,Int),
     peer :: SockAddr
 }
-
-class SocketLike a where
-    recv :: a -> Int -> IO B.ByteString
-    send :: a -> Ptr Word8 -> Int -> IO Int
-
-instance SocketLike Socket where
-    recv = NSB.recv
-    send = sendBuf
-
-instance SocketLike ToClientSocket where
-    recv (ToClientSocket {readQ = ourReadQ}) n = do
-        -- recv can send smaller stuff than asked, but never larger
-        bs <- atomically $ readTQueue ourReadQ
-        if B.length bs > n then
-            return $ B.take n bs
-        else
-            return bs
-
-    send (ToClientSocket {writeQ = ourWriteQ}) wordptr n =
-        atomically (writeTQueue ourWriteQ (wordptr,n)) >> return n
 
 newToClientSocket :: SockAddr -> IO ToClientSocket
 newToClientSocket addr = do
@@ -65,6 +42,7 @@ udpServerListenSocket ip = E.bracketOnError open close $ \s -> do
     withFdSocket s setCloseOnExecIfNeeded
     -- setSocketOption s IPv6Only 1 -- fixme
     bind s sa
+    putStrLn "server: bound socket"
     return (s,sa)
   where
     sa     = toSockAddr ip
@@ -82,10 +60,10 @@ udpClientConnectedSocket' mysa peersa = E.bracketOnError open close $ \s -> do
     putStrLn ("bind to " ++ show anysa ++ "...") >> hFlush stdout
     bind s anysa      -- (UDP, *:13443, *:*)
        `E.catch` postphone (bind s anysa)
-    putStrLn ("bind done") >> hFlush stdout
+    putStrLn "bind done" >> hFlush stdout
     putStrLn ("connect to " ++ show peersa ++ "...") >> hFlush stdout
     connect s peersa  -- (UDP, 127.0.0.1:13443, pa:pp)
-    putStrLn ("connect done") >> hFlush stdout
+    putStrLn "connect done" >> hFlush stdout
     getSocketName s >>= print
     hFlush stdout
     getPeerName s >>= print

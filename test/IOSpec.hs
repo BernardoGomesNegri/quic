@@ -19,6 +19,8 @@ spec = do
     sc <- runIO makeTestServerConfigR
     let cc = testClientConfigR
     describe "send & recv" $ do
+        it "can exchange data" $ do
+            withPipe Never $ testSendRecv cc sc 1000
         it "can exchange data on random dropping" $ do
             withPipe (Randomly 20) $ testSendRecv cc sc 1000
         it "can exchange data on server 0" $ do
@@ -76,23 +78,24 @@ testSendRecv cc sc times = do
     void $ concurrently (client mvar) (server mvar)
   where
     client mvar = do
-        threadDelay 10000
+        threadDelay $ 1 * (10^6)
         C.run cc $ \conn -> do
-            print "started client loop"
+            putStrLn "client: started client loop"
             strm <- stream conn
-            print "connected a stream to a server"
+            putStrLn "client: connected a stream to a server"
             let bs = BS.replicate 10000 0
-            replicateM_ times $ sendStream strm bs
-            print "sent all data to server"
+            let sendStrData = sendStream strm bs >> putStrLn "client: sent data"
+            replicateM_ times sendStrData
+            putStrLn "client: sent all data to server"
             shutdownStream strm
-            print "shutdown stream"
+            putStrLn "client: shutdown stream"
             takeMVar mvar `shouldReturn` ()
     server mvar = run sc $ \conn -> do
-        print "started server loop"
+        putStrLn "server: started server loop"
         strm <- acceptStream conn
-        print "accepted a client stream"
+        putStrLn "server: accepted a client stream"
         bs <- recvStream strm 1024
-        print "received bytes from client"
+        putStrLn "server: received bytes from client"
         let len = BS.length bs
         n <- loop strm bs len
         n `shouldBe` (10000 * times)
@@ -102,7 +105,7 @@ testSendRecv cc sc times = do
         loop _    "" n = return n
         loop strm _  n = do
             bs <- recvStream strm 1024
-            print "received more bytes from client"
+            putStrLn "server: received more bytes from client"
             let len = BS.length bs
                 n' = n + len
             loop strm bs n'
